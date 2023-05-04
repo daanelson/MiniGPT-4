@@ -1,0 +1,17 @@
+build:
+  gpu: true
+  cuda: "11.3"
+  system_packages:
+    - "libgl1-mesa-glx"
+    - "libglib2.0-0"
+  python_version: "3.8"
+  python_packages:
+    - "torch==1.10.2"
+    - "torchvision==0.11.3"
+    - "transformers==4.15.0"
+    - "gradio==3.28.1"
+    - "omegaconf==2.1.2"  # Added missing package with pinned version
+predict: "predict.py:Predictor"
+# Python packages based on the environment.yml file and additional dependencies
+# libgl1-mesa-glx and libglib2.0-0 based on the system packages in the environment.yml file
+# Added cuda version based on the compatible version from the PyTorch website
