@@ -1,5 +1,9 @@
+from collections import OrderedDict
 import logging
 import random
+import subprocess
+import time
+import os
 
 import torch
 from torch.cuda.amp import autocast as autocast
@@ -8,7 +12,9 @@ import torch.nn as nn
 from minigpt4.common.registry import registry
 from minigpt4.models.blip2 import Blip2Base, disabled_train
 from minigpt4.models.modeling_llama import LlamaForCausalLM
-from transformers import LlamaTokenizer
+from transformers import LlamaTokenizer, AutoConfig
+from tensorizer import TensorDeserializer
+from tensorizer.utils import no_init_or_tensor
 
 
 @registry.register_model("mini_gpt4")
@@ -33,6 +39,7 @@ class MiniGPT4(Blip2Base):
         freeze_qformer=True,
         num_query_token=32,
         llama_model="",
+        local_llama_path="",
         prompt_path="",
         prompt_template="",
         max_txt_len=32,
@@ -83,21 +90,12 @@ class MiniGPT4(Blip2Base):
         print('Loading Q-Former Done')
 
         print('Loading LLAMA')
-        self.llama_tokenizer = LlamaTokenizer.from_pretrained(llama_model, use_fast=False)
+        logging.disable(logging.WARN)
+        self.maybe_download(llama_model, local_llama_path)
+        self.llama_tokenizer = LlamaTokenizer.from_pretrained(local_llama_path, use_fast=False)
         self.llama_tokenizer.pad_token = self.llama_tokenizer.eos_token
-
-        if self.low_resource:
-            self.llama_model = LlamaForCausalLM.from_pretrained(
-                llama_model,
-                torch_dtype=torch.float16,
-                load_in_8bit=True,
-                device_map={'': device_8bit}
-            )
-        else:
-            self.llama_model = LlamaForCausalLM.from_pretrained(
-                llama_model,
-                torch_dtype=torch.float16,
-            )
+        self.llama_model = self.load_vicuna(local_llama_path)
+        logging.disable(logging.NOTSET)
 
         for name, param in self.llama_model.named_parameters():
             param.requires_grad = False
@@ -118,6 +116,33 @@ class MiniGPT4(Blip2Base):
             print('Prompt Example \n{}'.format(random.choice(self.prompt_list)))
         else:
             self.prompt_list = []
+
+    def maybe_download(self, path, local_path):
+        local_filename = 'vicuna-13b-16fp.tensors'
+        local_path = os.path.join(local_path, local_filename)
+        if os.path.exists(local_path):
+            return local_path
+        if path.startswith("gs://"):
+            subprocess.check_call(["gcloud", "storage", "cp", path, local_path])
+            return local_path
+        return path
+
+    def load_vicuna(self, weights):
+        st = time.time()
+        print(f"deserializing weights from {weights}")
+        config = AutoConfig.from_pretrained(os.path.join(weights, 'config.json'))
+
+        model = no_init_or_tensor(
+            lambda: LlamaForCausalLM.from_pretrained(
+                None, config=config, state_dict=OrderedDict(), torch_dtype=torch.float16
+            )
+        )
+
+        des = TensorDeserializer(os.path.join(weights, 'vicuna-13b-16fp.tensors'), plaid_mode=True)
+        des.load_into_module(model)
+        print(f"weights loaded in {time.time() - st}")
+        return model
+
 
     def vit_to_cpu(self):
         self.ln_vision.to("cpu")
@@ -172,6 +197,7 @@ class MiniGPT4(Blip2Base):
             img_embeds, atts_img = self.prompt_wrap(img_embeds, atts_img, vqa_prompt)
         elif self.prompt_list:
             prompt = random.choice(self.prompt_list)
+            print(f"randomly chosen prompt: {prompt}")
             img_embeds, atts_img = self.prompt_wrap(img_embeds, atts_img, prompt)
 
         self.llama_tokenizer.padding_side = "right"
@@ -226,6 +252,7 @@ class MiniGPT4(Blip2Base):
         img_size = cfg.get("image_size")
         num_query_token = cfg.get("num_query_token")
         llama_model = cfg.get("llama_model")
+        local_llama_path = cfg.get("local_llama_path")
 
         drop_path_rate = cfg.get("drop_path_rate", 0)
         use_grad_checkpoint = cfg.get("use_grad_checkpoint", False)
@@ -251,6 +278,7 @@ class MiniGPT4(Blip2Base):
             freeze_qformer=freeze_qformer,
             num_query_token=num_query_token,
             llama_model=llama_model,
+            local_llama_path=local_llama_path,
             prompt_path=prompt_path,
             prompt_template=prompt_template,
             max_txt_len=max_txt_len,

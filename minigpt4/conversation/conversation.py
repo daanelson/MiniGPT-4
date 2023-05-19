@@ -100,6 +100,8 @@ class StoppingCriteriaSub(StoppingCriteria):
 
     def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor):
         for stop in self.stops:
+            if input_ids[0].shape[0] < len(stop):
+                continue
             if torch.all((stop == input_ids[0][-len(stop):])).item():
                 return True
 
@@ -123,8 +125,10 @@ class Chat:
         self.device = device
         self.model = model
         self.vis_processor = vis_processor
-        stop_words_ids = [torch.tensor([835]).to(self.device),
-                          torch.tensor([2277, 29937]).to(self.device)]  # '###' can be encoded in two different ways.
+        # stopping on "###:Human" instead of "###"
+        stop_words_ids = [torch.tensor([2277, 29937, 29950,  7889, 29901]).to(self.device)]
+                          #torch.tensor([2277, 29937]).to(self.device)]  # '###' can be encoded in two different ways.
+        #stop_words_ids = []                  
         self.stopping_criteria = StoppingCriteriaList([StoppingCriteriaSub(stops=stop_words_ids)])
 
     def ask(self, text, conv):
@@ -165,8 +169,7 @@ class Chat:
         if output_token[0] == 1:  # some users find that there is a start token <s> at the beginning. remove it
             output_token = output_token[1:]
         output_text = self.model.llama_tokenizer.decode(output_token, add_special_tokens=False)
-        output_text = output_text.split('###')[0]  # remove the stop sign '###'
-        output_text = output_text.split('Assistant:')[-1].strip()
+        output_text = output_text.replace("###Human:", "").replace("###", "\n").replace("</s>","").replace("Assistant:", "").strip()
         conv.messages[-1][1] = output_text
         return output_text, output_token.cpu().numpy()
 
