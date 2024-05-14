@@ -13,7 +13,8 @@ model:
   num_query_token: 32
 
   # Vicuna
-  llama_model: "/path/to/vicuna/weights/"
+  llama_model: "https://weights.replicate.delivery/default/vicuna-13b/tensorized/vicuna-13b-16fp.tensors"
+  local_llama_path: "/src/vicuna-13b/tensorized"
 
   # generation configs
   prompt: ""

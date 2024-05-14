@@ -122,9 +122,11 @@ class MiniGPT4(Blip2Base):
         local_path = os.path.join(local_path, local_filename)
         if os.path.exists(local_path):
             return local_path
-        if path.startswith("gs://"):
-            subprocess.check_call(["gcloud", "storage", "cp", path, local_path])
-            return local_path
+        start = time.time()
+        print("downloading url: ", path)
+        print("downloading to: ", local_path)
+        subprocess.check_call(["pget", path, local_path], close_fds=False)
+        print("downloading took: ", time.time() - start)
         return path
 
     def load_vicuna(self, weights):
